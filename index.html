@@ -253,8 +253,20 @@ td img.thumb{width:52px;height:52px;object-fit:cover;border-radius:8px;border:1p
 </head>
 <body>
 
+<!-- ============ หน้าสาธารณะ (สแกน QR แล้วเห็นทันที ไม่ต้องล็อกอิน) ============ -->
+<div id="publicView" style="display:none;min-height:100vh;background:var(--bg)">
+  <div style="background:linear-gradient(135deg,var(--pine),#0a332e);color:#fff;padding:1rem 1.2rem;display:flex;align-items:center;gap:.6rem">
+    <span style="width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--teal),#0c8a76);display:flex;align-items:center;justify-content:center">🗂️</span>
+    <div><div style="font-weight:800;font-size:.98rem">บัตรครุภัณฑ์</div>
+    <div style="font-size:.75rem;opacity:.75">โรงพยาบาลศีขรภูมิ จังหวัดสุรินทร์</div></div>
+  </div>
+  <div style="max-width:520px;margin:0 auto;padding:1rem .9rem 3rem" id="publicBody">
+    <div class="empty">กำลังโหลดข้อมูล…</div>
+  </div>
+</div>
+
 <!-- ============ LOGIN ============ -->
-<div id="loginView">
+<div id="loginView" style="display:none">
   <div class="login-card">
     <div class="logo">🗂️</div>
     <h1>Office Asset</h1>
@@ -305,6 +317,12 @@ td img.thumb{width:52px;height:52px;object-fit:cover;border-radius:8px;border:1p
         <button class="chip" data-v="no" onclick="tgQ(this)">ยังไม่เคยพิมพ์</button>
         <button class="chip" data-v="yes" onclick="tgQ(this)">พิมพ์แล้ว</button>
       </div></div>
+    <div class="filt"><label>ความครบของข้อมูล</label>
+      <div class="chiprow" id="fMiss">
+        <button class="chip" data-v="gfmis" onclick="tgM(this)">ยังไม่มี GFMIS</button>
+        <button class="chip" data-v="loc" onclick="tgM(this)">ยังไม่ระบุสถานที่</button>
+        <button class="chip" data-v="photo" onclick="tgM(this)">ยังไม่มีรูป</button>
+      </div></div>
     <div class="sidefoot">
       <div class="av" id="avatarCh">–</div>
       <div><div class="nm" id="footName"></div><span class="role" id="footRole"></span></div>
@@ -352,14 +370,14 @@ td img.thumb{width:52px;height:52px;object-fit:cover;border-radius:8px;border:1p
    ระบบบริหารครุภัณฑ์สำนักงาน v6 — ต่อยอดจาก Hospital Asset v5
    ตั้งค่า API_URL ให้เป็น Web App URL ของ Apps Script ที่ deploy แล้ว
 ================================================================ */
-const DEFAULT_API_URL='https://script.google.com/macros/s/AKfycbwKdXSEFcNzQpMOiWQvTnZ1X4ITGbiwUnwlpE9VtDzE-ULYm0QrwbtBiol9bSchIYad/exec';   // ← ใส่ Web App URL ตรงนี้ได้ หรือกรอกหน้าล็อกอินครั้งแรก
+const DEFAULT_API_URL='https://script.google.com/macros/s/AKfycbwKdXSEFcNzQpMOiWQvTnZ1X4ITGbiwUnwlpE9VtDzE-ULYm0QrwbtBiol9bSchIYad/exec';   // ← Web App URL ของชีต v6
 let API_URL=DEFAULT_API_URL;
 try{API_URL=localStorage.getItem('ofa_api_url')||DEFAULT_API_URL;}catch(e){}
 let CRED=null;
 let DB={equipment:[],repairs:[],transfers:[],loans:[],users:[],departments:[],settings:{}};
 let USER=null;
 let VIEW={page:'list',code:null,subtab:'info'};
-let FIL={search:'',type:'',loc:'',stat:new Set(),qr:new Set()};
+let FIL={search:'',type:'',loc:'',stat:new Set(),qr:new Set(),miss:new Set()};
 let CURDEPT='';
 let PICK=new Set();            // รายการที่ติ๊กเลือกไว้สำหรับพิมพ์ QR
 let PICKMODE=false;
@@ -519,26 +537,99 @@ function toggleND(){
   d.classList.toggle('open');
 }
 
+/* ================================================================
+   หน้าสาธารณะ — สแกน QR แล้วเห็นข้อมูลทั่วไป + รูป โดยไม่ต้องล็อกอิน
+   ข้อมูลอ่อนไหว (ราคา ผู้ขาย เลขที่สัญญา ประวัติซ่อม/ยืม) ไม่ถูกส่งมาที่หน้านี้เลย
+================================================================ */
+function hashCode(){
+  const m=String(location.hash||'').match(/device=([\w\-\.%]+)/);
+  if(!m)return null;
+  try{return decodeURIComponent(m[1]);}catch(e){return m[1];}
+}
+async function showPublic(code){
+  $('loginView').style.display='none';
+  $('appView').style.display='none';
+  $('publicView').style.display='block';
+  const box=$('publicBody');
+  box.innerHTML='<div class="empty">กำลังโหลดข้อมูล…</div>';
+  let d=null,err='';
+  try{
+    const url=new URL(API_URL);
+    url.searchParams.set('action','public');
+    url.searchParams.set('id',code);
+    const j=await (await fetch(url.toString())).json();
+    if(j.ok)d=j.data;else err=j.error||'ไม่พบข้อมูล';
+  }catch(e){err='เชื่อมต่อไม่สำเร็จ — ตรวจสอบอินเทอร์เน็ต';}
+  if(!d){
+    box.innerHTML=`<div class="panel"><div class="empty">⚠️ ${esc(err)}<br><span class="mute">รหัส ${esc(code)}</span></div>
+      <button class="btn-p" style="width:100%" onclick="publicToLogin()">🔐 เข้าสู่ระบบ</button></div>`;
+    return;
+  }
+  const row=(k,v)=>v?`<div><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`:'';
+  box.innerHTML=`
+    <div class="panel" style="padding:0;overflow:hidden">
+      <div style="height:230px;background:linear-gradient(135deg,#e8f1ef,#f4f8f7);display:flex;align-items:center;justify-content:center;font-size:3.4rem;color:#b9cfc9">
+        ${d.photo?`<img src="${esc(d.photo)}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:center ${d.photoPos??50}%">`:'🗄️'}
+      </div>
+      <div style="padding:1rem 1.1rem 1.15rem">
+        <div class="mute" style="font-weight:800">${esc(d.code)}</div>
+        <h1 style="font-size:1.15rem;margin:.1rem 0 .5rem">${esc(d.name)}</h1>
+        <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.9rem">
+          <span class="badge ${stBadge(d.status)}">${esc(d.status)}</span>
+          ${d.type?`<span class="badge b-blue">${esc(d.type)}</span>`:''}
+        </div>
+        <dl class="kv">
+          ${row('เลขครุภัณฑ์ราชการ',d.assetNo)}
+          ${row('รหัสทรัพย์สิน GFMIS',d.gfmis)}
+          ${row('สถานที่ใช้งาน',d.location)}
+          ${row('หน่วยงานเจ้าของ',d.deptName)}
+          ${row('ผู้รับผิดชอบ',d.caretaker)}
+        </dl>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="mute" style="margin-bottom:.7rem">ต้องการแจ้งซ่อม ย้ายจุด ยืม-คืน หรือแก้ไขข้อมูล — เข้าสู่ระบบก่อน</div>
+      <button class="btn-p" style="width:100%;padding:.7rem" onclick="publicToLogin()">🔐 เข้าสู่ระบบเพื่อจัดการ</button>
+    </div>`;
+}
+function publicToLogin(){
+  $('publicView').style.display='none';
+  $('loginView').style.display='flex';
+  setTimeout(()=>{const u=$('loginUser');if(u)u.focus();},50);
+}
+
 /* ---------- auth / nav ---------- */
+function saveCred(c){try{localStorage.setItem('ofa_cred',JSON.stringify(c));}catch(e){}}
+function loadCred(){try{const s=localStorage.getItem('ofa_cred');return s?JSON.parse(s):null;}catch(e){return null;}}
+function clearCred(){try{localStorage.removeItem('ofa_cred');}catch(e){}}
 function resetApiUrl(){
   try{localStorage.removeItem('ofa_api_url');}catch(e){}
   API_URL='';$('apiField').style.display='block';$('apiUrl').value='';toast('วาง Web App URL ใหม่แล้วกดเข้าสู่ระบบ');
 }
-async function doLogin(){
-  const urlIn=$('apiUrl').value.trim();
-  if(urlIn){API_URL=urlIn;try{localStorage.setItem('ofa_api_url',API_URL);}catch(e){}}
-  if(!API_URL){$('loginErr').textContent='กรุณาใส่ Web App URL ก่อน';$('loginErr').style.display='block';return;}
-  const u=$('loginUser').value.trim(),p=$('loginPass').value;
-  if(!u||!p){$('loginErr').textContent='กรอกชื่อผู้ใช้และรหัสผ่าน';$('loginErr').style.display='block';return;}
+async function doLogin(silentCred){
+  if(!silentCred){
+    const urlIn=$('apiUrl').value.trim();
+    if(urlIn){API_URL=urlIn;try{localStorage.setItem('ofa_api_url',API_URL);}catch(e){}}
+  }
+  if(!API_URL){$('loginErr').textContent='กรุณาใส่ Web App URL ก่อน';$('loginErr').style.display='block';return false;}
+  const u=silentCred?silentCred.u:$('loginUser').value.trim();
+  const p=silentCred?silentCred.p:$('loginPass').value;
+  if(!u||!p){
+    if(silentCred)return false;
+    $('loginErr').textContent='กรอกชื่อผู้ใช้และรหัสผ่าน';$('loginErr').style.display='block';return false;
+  }
   CRED={u,p};
   let f;
   try{const j=await api('login',{},'กำลังเข้าสู่ระบบ…');f=j.user;}
   catch(err){
     CRED=null;
+    if(silentCred){clearCred();return false;}   // รหัสผ่านถูกเปลี่ยน/ลบ → ล้างที่จำไว้ กลับไปหน้าล็อกอิน
     $('loginErr').textContent=String(err.message).includes('Failed to fetch')?'เชื่อมต่อไม่ได้ — ตรวจสอบ URL และอินเทอร์เน็ต':err.message;
-    $('loginErr').style.display='block';return;
+    $('loginErr').style.display='block';return false;
   }
+  saveCred({u,p});
   USER=f;$('loginErr').style.display='none';
+  $('publicView').style.display='none';
   $('loginView').style.display='none';$('appView').style.display='block';
   $('whoName').textContent=f.name;$('whoRole').textContent=ROLE_TH[f.role]||f.role;
   $('footName').textContent=f.name;
@@ -549,11 +640,15 @@ async function doLogin(){
   $('nav-users').style.display=isAdmin()?'':'none';
   CURDEPT=isTech()?'':((DB.departments[0]&&DB.departments[0].code)||'');
   fillDeptSelector();fillFilterOptions();refreshBell();
-  const m=location.hash.match(/device=([\w\-\.%]+)/);
-  const code=m?decodeURIComponent(m[1]):null;
+  const code=hashCode();
   if(code&&DB.equipment.find(e=>String(e.code)===code))goDetail(code);else goList();
+  return true;
 }
-function logout(){USER=null;CRED=null;location.hash='';$('appView').style.display='none';$('loginView').style.display='flex';$('loginPass').value='';}
+function logout(){
+  USER=null;CRED=null;clearCred();location.hash='';
+  $('appView').style.display='none';$('publicView').style.display='none';
+  $('loginView').style.display='flex';$('loginPass').value='';
+}
 function setNav(id,title){document.querySelectorAll('.side nav button').forEach(b=>b.classList.remove('on'));const n=$(id);if(n)n.classList.add('on');$('pageTitle').textContent=title;$('sidebar').classList.remove('open');}
 function goList(){VIEW.page='list';setNav('nav-list','ทะเบียนครุภัณฑ์');render();}
 function goAllRepairs(){VIEW.page='repairs';setNav('nav-repairs','งานซ่อม / บำรุงรักษา');render();}
@@ -579,8 +674,9 @@ function fillFilterOptions(){
 }
 function tgS(b){b.classList.toggle('on');const v=b.dataset.v;FIL.stat.has(v)?FIL.stat.delete(v):FIL.stat.add(v);renderIfList();}
 function tgQ(b){b.classList.toggle('on');const v=b.dataset.v;FIL.qr.has(v)?FIL.qr.delete(v):FIL.qr.add(v);renderIfList();}
+function tgM(b){b.classList.toggle('on');const v=b.dataset.v;FIL.miss.has(v)?FIL.miss.delete(v):FIL.miss.add(v);renderIfList();}
 function clearFilters(){
-  FIL={search:'',type:'',loc:'',stat:new Set(),qr:new Set()};
+  FIL={search:'',type:'',loc:'',stat:new Set(),qr:new Set(),miss:new Set()};
   $('fSearch').value='';$('fType').value='';$('fLoc').value='';
   document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
   renderIfList();
@@ -603,6 +699,11 @@ function applyFilters(list){
     const has=!!String(e.qrPrinted||'').trim();
     return (FIL.qr.has('yes')&&has)||(FIL.qr.has('no')&&!has);
   });
+  // ตัวกรองความครบของข้อมูล — เลือกหลายอันได้ ติดเงื่อนไขไหนก็ขึ้น (ไว้ไล่เติมข้อมูลเป็นชุด)
+  if(FIL.miss.size)list=list.filter(e=>
+    (FIL.miss.has('gfmis')&&!String(e.gfmis||'').trim())
+    ||(FIL.miss.has('loc')&&!String(e.location||'').trim())
+    ||(FIL.miss.has('photo')&&!String(e.photo||'').trim()));
   return list;
 }
 
@@ -963,17 +1064,18 @@ function viewDepts(){
 /* ================================================================
    หน้าพิมพ์ป้าย QR แบบชุด
 ================================================================ */
-let QRCFG={cols:4,rows:5,qrmm:26,gapmm:3,batch:200};
+let QRCFG={cols:4,rows:5,gapmm:3,marginmm:8,batch:200,showGfmis:true};
 function qrTargets(){
   if(PICK.size)return DB.equipment.filter(e=>PICK.has(e.code));
   return applyFilters([...DB.equipment]);
 }
 function viewQR(){
   const list=qrTargets();
-  const perPage=QRCFG.cols*QRCFG.rows;
-  const pages=Math.ceil(list.length/perPage)||0;
+  const L=qrLayout(list);
+  const pages=Math.ceil(list.length/L.perPage)||0;
   const files=Math.ceil(list.length/QRCFG.batch)||0;
   const noPrint=DB.equipment.filter(e=>!String(e.qrPrinted||'').trim()).length;
+  const tooTall=QRCFG.rows>L.fitRows;
   return `
   <div class="costrow" style="margin-bottom:1rem">
     <div class="costbox hl"><div class="cl">จะพิมพ์ครั้งนี้</div><div class="cv">${list.length}</div></div>
@@ -1001,10 +1103,21 @@ function viewQR(){
     <div class="fgrid">
       <div class="field"><label>คอลัมน์ต่อหน้า</label><input type="number" min="1" max="8" value="${QRCFG.cols}" onchange="QRCFG.cols=Math.max(1,+this.value||4);render()"></div>
       <div class="field"><label>แถวต่อหน้า</label><input type="number" min="1" max="12" value="${QRCFG.rows}" onchange="QRCFG.rows=Math.max(1,+this.value||5);render()"></div>
-      <div class="field"><label>ขนาด QR (มม.)</label><input type="number" min="12" max="60" value="${QRCFG.qrmm}" onchange="QRCFG.qrmm=Math.max(12,+this.value||26);render()"></div>
-      <div class="field"><label>ระยะห่างป้าย (มม.)</label><input type="number" min="0" max="15" value="${QRCFG.gapmm}" onchange="QRCFG.gapmm=Math.max(0,+this.value||0);render()"></div>
+      <div class="field"><label>ระยะห่างป้าย (มม.)</label><input type="number" min="0" max="20" value="${QRCFG.gapmm}" onchange="QRCFG.gapmm=Math.max(0,+this.value||0);render()"></div>
+      <div class="field"><label>ขอบกระดาษ (มม.)</label><input type="number" min="0" max="30" value="${QRCFG.marginmm}" onchange="QRCFG.marginmm=Math.max(0,+this.value||0);render()"></div>
+      <div class="field wide"><label>ข้อมูลบนป้าย</label>
+        <label style="font-weight:500;display:flex;align-items:center;gap:.5rem;cursor:pointer">
+          <input type="checkbox" style="width:auto" ${QRCFG.showGfmis?'checked':''} onchange="QRCFG.showGfmis=this.checked;render()">
+          แสดงรหัส GFMIS บนป้ายด้วย
+          <span class="mute">(มีข้อมูล ${DB.equipment.filter(e=>String(e.gfmis||'').trim()).length} จาก ${DB.equipment.length} รายการ)</span>
+        </label></div>
     </div>
-    <div class="mute">💡 วัดกระดาษสติกเกอร์ที่ใช้จริงก่อน แล้วปรับคอลัมน์/แถวให้ตรงช่อง — พิมพ์ทดสอบ 1 แผ่นก่อนพิมพ์ทั้งชุด</div>
+    <div class="mute" style="line-height:1.9">
+      ขนาดป้ายที่ได้จริง: <b>${L.cellW.toFixed(1)} × ${L.cellH.toFixed(1)} มม.</b> — ป้ายทุกใบสูงเท่ากันหมด กริดจึงตรงช่องสติกเกอร์
+      ${tooTall?`<br><span style="color:var(--red);font-weight:700">⚠️ ตั้งไว้ ${QRCFG.rows} แถว แต่กระดาษ A4 ใส่ได้จริง ${L.fitRows} แถว — ระบบจะใช้ ${L.rows} แถว ถ้าอยากได้ครบตามที่ตั้ง ให้เพิ่มจำนวนคอลัมน์ (ป้ายจะเล็กลง) หรือลดขอบกระดาษ</span>`
+        :`<br>ใส่ได้สูงสุด ${L.fitRows} แถวต่อหน้า ตอนนี้ใช้ ${L.rows} แถว = <b>${L.perPage} ป้ายต่อหน้า</b>`}
+      <br>💡 วัดช่องสติกเกอร์ที่ใช้จริงก่อน ปรับคอลัมน์/แถว/ขอบให้ตรง แล้ว<b>พิมพ์ทดสอบ 1 แผ่น</b>ก่อนพิมพ์ทั้งชุด · ตอนสั่งพิมพ์ให้ตั้ง Scale เป็น <b>100% / Actual size</b> ไม่ใช่ "Fit to page" ไม่งั้นขนาดจะเพี้ยน
+    </div>
   </div>
 
   <div class="panel">
@@ -1032,7 +1145,10 @@ function quickQR(mode){
 /* วาดป้าย 1 ดวงลง canvas (QR + ข้อความไทย) — ใช้ทั้งโหลดเดี่ยวและ PDF ชุด */
 function labelLines(e){
   // บรรทัดที่ 1 = เลขครุภัณฑ์ราชการ (ตัวหนา) · ที่เหลือเรียงตามความสำคัญตอนตามหาของจริง
-  const L=[String(e.assetNo||e.code||'').trim(),String(e.name||'').trim()];
+  const L=[String(e.assetNo||e.code||'').trim()];
+  // GFMIS ต้องมีคำนำหน้าเสมอ — เลขยาวสองชุดติดกันโดยไม่มีป้ายกำกับ คนคัดลอกผิดแน่
+  if(QRCFG.showGfmis&&String(e.gfmis||'').trim())L.push('GFMIS '+String(e.gfmis).trim());
+  L.push(String(e.name||'').trim());
   if(e.location)L.push('📍 '+e.location);
   const dn=deptName(e.dept);
   if(dn)L.push(dn);
@@ -1074,25 +1190,39 @@ function wrapText(ctx,text,maxW,maxRows){
     return s+'…';
   });
 }
-async function makeLabelCanvas(e,qrPx){
-  qrPx=qrPx||320;
-  const qr=await makeQRCanvas(qrURL(e.code),qrPx);
-  const src=labelLines(e);
+/* คำนวณบรรทัดข้อความของป้าย (ไม่สร้าง QR) — ใช้วัดความสูงล่วงหน้าเพื่อให้ทุกป้ายสูงเท่ากัน */
+const _measCtx=document.createElement('canvas').getContext('2d');
+function labelRows(e,qrPx){
   const pad=Math.round(qrPx*0.07);
-  const c=document.createElement('canvas');
-  c.width=qrPx+pad*2;
-  const maxW=c.width-pad*1.4;
-  const measure=document.createElement('canvas').getContext('2d');
-  // เตรียมบรรทัดจริง (พร้อมขนาดฟอนต์) ก่อน เพื่อคำนวณความสูงให้พอดี
+  const maxW=(qrPx+pad*2)-pad*1.4;
   const rows=[];
-  src.forEach((t,i)=>{
+  labelLines(e).forEach((t,i)=>{
     const size=i===0?Math.round(qrPx*0.085):Math.round(qrPx*0.066);
     const font=(i===0?'700 ':'400 ')+size+"px 'Prompt','Noto Sans Thai','Sukhumvit Set','Leelawadee UI',Tahoma,sans-serif";
-    measure.font=font;
-    wrapText(measure,t,maxW,i===0?1:2).forEach(line=>rows.push({line,font,lh:Math.round(size*1.35)}));
+    _measCtx.font=font;
+    wrapText(_measCtx,t,maxW,i===0?1:2).forEach(line=>rows.push({line,font,lh:Math.round(size*1.35)}));
   });
+  return rows;
+}
+/* ความสูงป้ายที่ "ตายตัว" สำหรับทั้งชุด — ป้ายทุกใบต้องเท่ากัน ไม่งั้นกริดเลื่อน พิมพ์ลงสติกเกอร์ไดคัทไม่ตรงช่อง */
+function labelHeightFor(list,qrPx){
+  const pad=Math.round(qrPx*0.07);
+  let maxTextH=0;
+  list.forEach(e=>{
+    const h=labelRows(e,qrPx).reduce((a,r)=>a+r.lh,0);
+    if(h>maxTextH)maxTextH=h;
+  });
+  return pad+qrPx+Math.round(pad*0.55)+maxTextH+pad;
+}
+async function makeLabelCanvas(e,qrPx,fixedH){
+  qrPx=qrPx||320;
+  const qr=await makeQRCanvas(qrURL(e.code),qrPx);
+  const pad=Math.round(qrPx*0.07);
+  const rows=labelRows(e,qrPx);
   const textH=rows.reduce((a,r)=>a+r.lh,0);
-  c.height=pad+qrPx+Math.round(pad*0.55)+textH+pad;
+  const c=document.createElement('canvas');
+  c.width=qrPx+pad*2;
+  c.height=fixedH||(pad+qrPx+Math.round(pad*0.55)+textH+pad);
   const ctx=c.getContext('2d');
   ctx.fillStyle='#ffffff';ctx.fillRect(0,0,c.width,c.height);
   if(qr)ctx.drawImage(qr,pad,pad,qrPx,qrPx);
@@ -1103,23 +1233,36 @@ async function makeLabelCanvas(e,qrPx){
 }
 async function renderQRPreview(){
   const box=$('qrPrev');if(!box)return;
-  const list=qrTargets().slice(0,5);
+  const all=qrTargets();
+  const list=all.slice(0,5);
   if(!list.length)return;
+  // ใช้ความสูงตายตัวชุดเดียวกับตอนพิมพ์ ตัวอย่างจะได้ตรงกับของจริง
+  const h=labelHeightFor(all,220);
   box.innerHTML='';
   for(const e of list){
-    const c=await makeLabelCanvas(e,220);
+    const c=await makeLabelCanvas(e,220,h);
     const d=document.createElement('div');d.className='lbl';
     d.appendChild(c);
     box.appendChild(d);
   }
 }
+/* คำนวณผังหน้าไว้ล่วงหน้า — จุดเดียวที่ตัดสินว่าป้ายใบไหนอยู่หน้าไหน แถวไหน คอลัมน์ไหน */
+function qrLayout(list){
+  const pw=210,ph=297,margin=QRCFG.marginmm,gap=QRCFG.gapmm;
+  const cols=Math.max(1,QRCFG.cols);
+  const cellW=(pw-margin*2-gap*(cols-1))/cols;
+  const qrPx=320;
+  const labH=list.length?labelHeightFor(list,qrPx):qrPx*1.4;
+  const cellH=cellW*labH/(qrPx+Math.round(qrPx*0.07)*2);
+  const fitRows=Math.max(1,Math.floor((ph-margin*2+gap)/(cellH+gap)));
+  const rows=Math.max(1,Math.min(QRCFG.rows,fitRows));
+  return {pw,ph,margin,gap,cols,rows,fitRows,cellW,cellH,qrPx,labH,perPage:cols*rows};
+}
 async function buildQRPdf(markPrinted){
   const all=qrTargets();
   if(!all.length){toast('ไม่มีรายการ');return;}
   const {jsPDF}=window.jspdf;
-  const pw=210,ph=297,margin=8;
-  const cols=QRCFG.cols,rows=QRCFG.rows,gap=QRCFG.gapmm;
-  const cellW=(pw-margin*2-gap*(cols-1))/cols;
+  const L=qrLayout(all);
   $('qrProgWrap').style.display='block';
   const setProg=(i,n,msg)=>{$('qrProg').style.width=Math.round(i/n*100)+'%';$('qrProgMsg').textContent=msg;};
   const chunks=[];
@@ -1129,23 +1272,15 @@ async function buildQRPdf(markPrinted){
     for(let ci=0;ci<chunks.length;ci++){
       const items=chunks[ci];
       const pdf=new jsPDF('p','mm','a4');
-      let col=0,row=0,first=true;
-      for(const e of items){
-        const c=await makeLabelCanvas(e,320);
-        const imgH=cellW*c.height/c.width;
-        if(!first&&col===0&&row===0)pdf.addPage();
-        const x=margin+col*(cellW+gap);
-        const y=margin+row*(imgH+gap);
-        if(y+imgH>ph-margin){ // แถวเกินหน้า → ขึ้นหน้าใหม่
-          pdf.addPage();col=0;row=0;
-          pdf.addImage(c.toDataURL('image/jpeg',.92),'JPEG',margin,margin,cellW,imgH);
-        }else{
-          pdf.addImage(c.toDataURL('image/jpeg',.92),'JPEG',x,y,cellW,imgH);
-        }
-        first=false;
-        col++;
-        if(col>=cols){col=0;row++;
-          if(margin+row*(imgH+gap)+imgH>ph-margin){pdf.addPage();row=0;}}
+      for(let i=0;i<items.length;i++){
+        const slot=i%L.perPage;
+        if(i>0&&slot===0)pdf.addPage();          // ← ขึ้นหน้าใหม่ที่เดียวเท่านั้น
+        const col=slot%L.cols, row=Math.floor(slot/L.cols);
+        const x=L.margin+col*(L.cellW+L.gap);
+        const y=L.margin+row*(L.cellH+L.gap);
+        // ทุกป้ายสูงเท่ากัน (labH) กริดจึงตรงช่องสติกเกอร์เสมอ
+        const c=await makeLabelCanvas(items[i],L.qrPx,L.labH);
+        pdf.addImage(c.toDataURL('image/jpeg',.92),'JPEG',x,y,L.cellW,L.cellH);
         done++;
         if(done%5===0){setProg(done,all.length,`กำลังสร้างป้าย ${done} / ${all.length} …`);await new Promise(r=>setTimeout(r,0));}
       }
@@ -1709,6 +1844,19 @@ $('loginPass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 if(API_URL)$('apiField').style.display='none';
 const _render=render;
 render=function(){_render();if(VIEW.page==='qr')setTimeout(renderQRPreview,30);};
+
+/* ---------- ลำดับการเปิดหน้าแรก ----------
+   สแกน QR + เคยล็อกอินในเครื่องนี้ → เข้าบัตรเต็มทันที
+   สแกน QR + ยังไม่เคยล็อกอิน      → หน้าสาธารณะ (ข้อมูลทั่วไป + รูป)
+   เปิดตรงๆ + เคยล็อกอิน            → เข้าระบบเลย
+   เปิดตรงๆ + ยังไม่เคย             → หน้าล็อกอิน                          */
+(async function boot(){
+  const code=hashCode();
+  const cred=API_URL?loadCred():null;
+  if(cred&&await doLogin(cred))return;
+  if(code&&API_URL){showPublic(code);return;}
+  $('loginView').style.display='flex';
+})();
 </script>
 </body>
 </html>
